@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_current_user
+from app.core.deps import get_current_user, get_optional_user
 from app.db.session import get_db
 from app.models.cart import CartGroupShare, CartItem, ShoppingCart
 from app.models.group import Group, GroupMembership
@@ -106,33 +106,11 @@ async def create_cart(
 
 
 @router.get("/", response_model=list[CartRead])
-async def list_my_carts(
-    current_user: User = Depends(get_current_user),
+async def list_carts(
     db: AsyncSession = Depends(get_db),
-    include_shared: bool = True,
 ):
-    owned_result = await db.execute(
-        select(ShoppingCart).where(ShoppingCart.owner_id == current_user.id)
-    )
-    carts = list(owned_result.scalars().all())
-
-    if include_shared:
-        my_groups_result = await db.execute(
-            select(GroupMembership.group_id).where(GroupMembership.user_id == current_user.id)
-        )
-        my_group_ids = [row[0] for row in my_groups_result.all()]
-        if my_group_ids:
-            shared_cart_ids_result = await db.execute(
-                select(CartGroupShare.cart_id).where(CartGroupShare.group_id.in_(my_group_ids))
-            )
-            shared_cart_ids = {row[0] for row in shared_cart_ids_result.all()}
-            owned_ids = {c.id for c in carts}
-            new_ids = shared_cart_ids - owned_ids
-            if new_ids:
-                shared_result = await db.execute(
-                    select(ShoppingCart).where(ShoppingCart.id.in_(new_ids))
-                )
-                carts.extend(shared_result.scalars().all())
+    result = await db.execute(select(ShoppingCart))
+    carts = result.scalars().all()
 
     out = []
     for c in carts:
@@ -146,11 +124,9 @@ async def list_my_carts(
 @router.get("/{cart_id}", response_model=CartDetail)
 async def get_cart(
     cart_id: uuid.UUID,
-    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     cart = await _get_cart_or_404(db, cart_id)
-    await _assert_access(db, cart, current_user)
 
     items_result = await db.execute(select(CartItem).where(CartItem.cart_id == cart_id))
     items = items_result.scalars().all()
